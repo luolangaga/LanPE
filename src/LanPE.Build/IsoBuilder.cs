@@ -3,8 +3,11 @@ using CoreP = LanPE.Core;
 namespace LanPE.Build;
 
 /// <summary>
-/// 用工具链把暂存目录生成为 BIOS+UEFI 双引导、可 DD 直写的 hybrid ISO。
-/// 优先 grub-mkrescue（自动产出 hybrid 镜像）；缺失时回退到直接调用 xorriso。
+/// 生成 BIOS+UEFI 双引导的 hybrid ISO。
+///
+/// 实现路径：grub-mkimage 产出引导镜像 + 纯 C# 的 <see cref="Iso9660Writer"/> 写出文件系统。
+/// 不依赖 xorriso / grub-mkrescue —— 这两个在 Windows 上不易获取，
+/// 而 Native AOT 产物应当零外部工具依赖。
 /// </summary>
 public sealed class IsoBuilder
 {
@@ -25,12 +28,26 @@ public sealed class IsoBuilder
         string? outDir = Path.GetDirectoryName(Path.GetFullPath(outputIso));
         if (!string.IsNullOrEmpty(outDir)) Directory.CreateDirectory(outDir);
 
-        if (!string.IsNullOrWhiteSpace(_tools.GrubMkrescuePath))
-            await BuildWithGrubMkrescueAsync(stagingDir, outputIso, volumeLabel, progress, ct).ConfigureAwait(false);
-        else if (!string.IsNullOrWhiteSpace(_tools.XorrisoPath))
-            await BuildWithXorrisoAsync(stagingDir, outputIso, volumeLabel, progress, ct).ConfigureAwait(false);
-        else
-            throw new FileNotFoundException("工具链中既没有 grub-mkrescue 也没有 xorriso，无法生成 ISO。");
+        progress?.Report(CoreP.ProgressInfo.Log(CoreP.ProgressPhase.BuildingIso, "生成 GRUB 引导镜像…"));
+
+        var grub = new GrubImageBuilder(_tools);
+        byte[]? biosImg = await grub.BuildBiosImageAsync("/boot/grub", progress, ct).ConfigureAwait(false);
+        byte[]? uefiImg = await grub.BuildUefiImageAsync("/boot/grub", progress, ct).ConfigureAwait(false);
+
+        if (biosImg == null && uefiImg == null)
+            throw new FileNotFoundException(
+                "工具链中未找到可用的 grub-mkimage（或其模块目录）。请先准备 lanpe-tools.zip：\n" +
+                "  .\\scripts\\fetch-tools.ps1");
+
+        progress?.Report(CoreP.ProgressInfo.Log(CoreP.ProgressPhase.BuildingIso, "写入 ISO9660 文件系统…"));
+
+        var writer = new Iso9660Writer(volumeLabel ?? "LanPE");
+        int biosIdx = biosImg != null ? writer.AddBootImage(biosImg) : -1;
+        int uefiIdx = uefiImg != null ? writer.AddBootImage(uefiImg) : -1;
+
+        writer.AddDirectoryTree(stagingDir);
+
+        await Task.Run(() => writer.Write(outputIso, biosIdx, uefiIdx), ct).ConfigureAwait(false);
 
         if (!File.Exists(outputIso))
             throw new InvalidOperationException("ISO 生成失败：输出文件不存在。");
@@ -39,81 +56,5 @@ public sealed class IsoBuilder
         progress?.Report(CoreP.ProgressInfo.Log(CoreP.ProgressPhase.Done,
             $"ISO 已生成：{outputIso}（{fi.Length / 1024.0 / 1024.0:F1} MB）"));
         return outputIso;
-    }
-
-    private async Task BuildWithGrubMkrescueAsync(
-        string stagingDir, string outputIso, string? label,
-        IProgress<CoreP.ProgressInfo>? progress, CancellationToken ct)
-    {
-        progress?.Report(CoreP.ProgressInfo.Log(CoreP.ProgressPhase.BuildingIso, "开始生成 ISO（grub-mkrescue）…"));
-
-        string? toolDir = Path.GetDirectoryName(_tools.GrubMkrescuePath);
-        string args = $"-o \"{outputIso}\" -volid \"{Sanitize(label, "LanPE")}\" \"{stagingDir}\"";
-
-        var result = await RunToolAsync(_tools.GrubMkrescuePath!, args, toolDir, stagingDir, progress, ct)
-            .ConfigureAwait(false);
-        if (!result.Success)
-            throw new InvalidOperationException("grub-mkrescue 失败。" + Environment.NewLine + result.StdErr);
-    }
-
-    private async Task BuildWithXorrisoAsync(
-        string stagingDir, string outputIso, string? label,
-        IProgress<CoreP.ProgressInfo>? progress, CancellationToken ct)
-    {
-        progress?.Report(CoreP.ProgressInfo.Log(CoreP.ProgressPhase.BuildingIso, "开始生成 ISO（xorriso 直调）…"));
-
-        string efiImg = "EFI/BOOT/BOOTX64.EFI";
-        string biosImg = "boot/grub/i386-pc/eltorito.img";
-
-        if (!File.Exists(Path.Combine(stagingDir, efiImg.Replace('/', Path.DirectorySeparatorChar))))
-            throw new FileNotFoundException($"暂存目录缺少 UEFI 引导镜像 {efiImg}，无法直调 xorriso。");
-
-        var sb = new System.Text.StringBuilder();
-        sb.Append($"-as mkisofs -iso-level 3 -full-iso9660-filenames -volid \"{Sanitize(label, "LanPE")}\" ");
-        sb.Append($"-eltorito-alt-boot -e \"{efiImg}\" -no-emul-boot -isohybrid-gpt-basdat ");
-
-        if (File.Exists(Path.Combine(stagingDir, biosImg.Replace('/', Path.DirectorySeparatorChar))))
-        {
-            sb.Append($"-b \"{biosImg}\" -no-emul-boot -boot-load-size 4 -boot-info-table ");
-            string mbr = Path.Combine(_tools.RootDir, "grub", "isohdpfx.bin");
-            if (File.Exists(mbr)) sb.Append($"-isohybrid-mbr \"{mbr}\" ");
-        }
-
-        sb.Append($"-o \"{outputIso}\" \"{stagingDir}\"");
-
-        string? toolDir = Path.GetDirectoryName(_tools.XorrisoPath);
-        var result = await RunToolAsync(_tools.XorrisoPath!, sb.ToString(), toolDir, stagingDir, progress, ct)
-            .ConfigureAwait(false);
-        if (!result.Success)
-            throw new InvalidOperationException("xorriso 失败。" + Environment.NewLine + result.StdErr);
-    }
-
-    private static async Task<CoreP.ProcessResult> RunToolAsync(
-        string exe, string args, string? toolDir, string workDir,
-        IProgress<CoreP.ProgressInfo>? progress, CancellationToken ct)
-    {
-        string oldPath = Environment.GetEnvironmentVariable("PATH") ?? "";
-        if (!string.IsNullOrEmpty(toolDir))
-            Environment.SetEnvironmentVariable("PATH", toolDir + Path.PathSeparator + oldPath);
-
-        try
-        {
-            return await CoreP.ProcessRunner.RunAsync(exe, args, workDir, progress, CoreP.ProgressPhase.BuildingIso, ct)
-                .ConfigureAwait(false);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", oldPath);
-        }
-    }
-
-    private static string Sanitize(string? label, string fallback)
-    {
-        if (string.IsNullOrWhiteSpace(label)) return fallback;
-        var sb = new System.Text.StringBuilder();
-        foreach (var c in label)
-            if (char.IsLetterOrDigit(c) || c == '_' || c == '-') sb.Append(c);
-        var s = sb.ToString();
-        return s.Length == 0 ? fallback : (s.Length > 32 ? s[..32] : s);
     }
 }
