@@ -1,0 +1,66 @@
+{
+  "name": "LanPE",
+  "version": "1.0.0",
+  "bootFiles": [
+    { "id": "wimboot",     "file": "wimboot" },
+    { "id": "bcd",         "file": "bcd" },
+    { "id": "boot.sdi",    "file": "boot.sdi" },
+    { "id": "bootmgr",     "file": "bootmgr" },
+    { "id": "bootmgr.efi", "file": "bootmgr.efi" }
+  ],
+  "components": [
+    {
+      "id": "win11pe",
+      "name": "Windows 11 PE",
+      "kind": "winpe",
+      "version": "24H2",
+      "arch": "x64",
+      "description": "基于 Windows 11 24H2 的维护环境，含完整 PE 工具集，wimboot 引导。",
+      "defaultSelected": true,
+      "payloadFiles": { "wim": "win11pe.wim" },
+      "boot": { "mode": "wimboot", "path": "pe/win11pe/win11pe.wim", "wimIndex": 2 },
+      "options": [
+        { "id": "ramdisk", "label": "RAMDisk 模式启动", "type": "bool", "default": "true" }
+      ],
+      "software": [
+        { "id": "disk-tools", "name": "硬盘工具（DiskGenius / BOOTICE / PartAssist）", "defaultSelected": true, "file": "apps/disk-tools.zip", "archive": "zip", "extractTo": "Apps/disk-tools" },
+        { "id": "hardware-tools", "name": "硬件检测（AIDA64 / CPU-Z / CrystalDiskInfo）", "defaultSelected": true, "file": "apps/hardware-tools.zip", "archive": "zip", "extractTo": "Apps/hardware-tools" },
+        { "id": "backup-tools", "name": "备份还原（Dism++ / WinNTSetup / CGI / EasyRC）", "defaultSelected": true, "file": "apps/backup-tools.zip", "archive": "zip", "extractTo": "Apps/backup-tools" },
+        { "id": "file-tools", "name": "文件工具（WinHex / Recuva / Everything / FastCopy）", "defaultSelected": true, "file": "apps/file-tools.zip", "archive": "zip", "extractTo": "Apps/file-tools" },
+        { "id": "system-tools", "name": "系统维护（NTBOOTautofix / 密码清除）", "defaultSelected": true, "file": "apps/system-tools.zip", "archive": "zip", "extractTo": "Apps/system-tools" },
+        { "id": "misc-tools", "name": "其他工具", "defaultSelected": false, "file": "apps/misc-tools.zip", "archive": "zip", "extractTo": "Apps/misc-tools" }
+      ]
+    },
+    {
+      "id": "win10pe",
+      "name": "Windows 10 PE",
+      "kind": "winpe",
+      "version": "22H2",
+      "arch": "x64",
+      "description": "基于 Windows 10 22H2 的维护环境，兼容较老硬件，wimboot 引导。",
+      "defaultSelected": true,
+      "payloadFiles": { "wim": "win10pe.wim" },
+      "boot": { "mode": "wimboot", "path": "pe/win10pe/win10pe.wim", "wimIndex": 2 },
+      "options": [
+        { "id": "ramdisk", "label": "RAMDisk 模式启动", "type": "bool", "default": "true" }
+      ],
+      "software": [
+        { "id": "disk-tools", "name": "硬盘工具（DiskGenius / BOOTICE / PartAssist）", "defaultSelected": true, "file": "apps/disk-tools.zip", "archive": "zip", "extractTo": "Apps/disk-tools" },
+        { "id": "file-tools", "name": "文件工具（WinHex / Recuva / Everything / FastCopy）", "defaultSelected": false, "file": "apps/file-tools.zip", "archive": "zip", "extractTo": "Apps/file-tools" }
+      ]
+    },
+    {
+      "id": "linux-rescue",
+      "name": "SystemRescue",
+      "kind": "linux",
+      "version": "11.03",
+      "arch": "x64",
+      "description": "Linux 救援工具盘，用于系统维护、数据救援与分区管理（GRUB loopback 引导）。",
+      "defaultSelected": true,
+      "payloadFiles": { "iso": "systemrescue.iso" },
+      "boot": { "mode": "loopback", "path": "iso/systemrescue.iso" },
+      "options": [],
+      "software": []
+    }
+  ]
+}
