@@ -126,29 +126,53 @@ public sealed class WriteUsbDialog : Window
 
         var progress = new Progress<ProgressInfo>(p =>
         {
-            if (!string.IsNullOrEmpty(p.Message)) _lblStatus.Text(p.Message!);
-            if (p.CurrentPercent >= 0) _bar.Value(Math.Clamp(p.CurrentPercent, 0, 100));
+            _ = OnUiAsync(() =>
+            {
+                if (!string.IsNullOrEmpty(p.Message)) _lblStatus.Text(p.Message!);
+                if (p.CurrentPercent >= 0) _bar.Value(Math.Clamp(p.CurrentPercent, 0, 100));
+            });
         });
 
         try
         {
             var writer = new RawImageWriter();
             await Task.Run(() => writer.WriteAsync(_isoPath, target, progress, _cts!.Token), _cts.Token);
-            _lblStatus.Text("写入完成。");
-            MessageBox.Notify("写入完成！", PromptIconKind.Info, owner: this);
+            await OnUiAsync(() =>
+            {
+                _lblStatus.Text("写入完成。");
+                MessageBox.Notify("写入完成！", PromptIconKind.Info, owner: this);
+            });
         }
-        catch (OperationCanceledException) { _lblStatus.Text("已取消。"); }
+        catch (OperationCanceledException) { await OnUiAsync(() => _lblStatus.Text("已取消。")); }
         catch (Exception ex)
         {
-            _lblStatus.Text("失败。");
-            MessageBox.Notify(ex.Message, PromptIconKind.Error, owner: this);
+            var message = ex.Message;
+            await OnUiAsync(() =>
+            {
+                _lblStatus.Text("失败。");
+                MessageBox.Notify(message, PromptIconKind.Error, owner: this);
+            });
         }
         finally
         {
             _cts.Dispose();
             _cts = null;
-            _btnClose.IsEnabled = true;
-            UpdateButton();
+            await OnUiAsync(() => { _btnClose.IsEnabled = true; UpdateButton(); });
         }
+    }
+
+    /// <summary>把动作投递到 UI 线程（进度回调来自后台线程）。</summary>
+    private static async Task OnUiAsync(Action action)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null) { action(); return; }
+
+        var tcs = new TaskCompletionSource();
+        dispatcher.BeginInvoke(() =>
+        {
+            try { action(); tcs.SetResult(); }
+            catch (Exception e) { tcs.SetException(e); }
+        });
+        await tcs.Task.ConfigureAwait(false);
     }
 }
