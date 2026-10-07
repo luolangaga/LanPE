@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Determine tag
+        id: vars
+        shell: pwsh
+        run: "tag=${{ github.ref_name }}; echo \"tag=$tag\" >> $env:GITHUB_OUTPUT"
+
+      # AOT 需要 MSVC 链接器；windows-latest 已自带
+      - name: Publish Native AOT
+        run: >
+          dotnet publish src/LanPE.UI/LanPE.UI.csproj
+          -c Release -r win-x64
+          -p:MewUIBackend=Direct2D
+          -o publish
+
+      - name: Package packer
+        shell: pwsh
+        run: Compress-Archive -Path publish/LanPE.Packer.exe -DestinationPath release/assets/LanPE.Packer.zip -Force
+
+      - name: Generate manifest
+        shell: pwsh
+        run: ./scripts/gen-manifest.ps1 -ReleaseTag "${{ steps.vars.outputs.tag }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: LanPE ${{ steps.vars.outputs.tag }}
+          draft: false
+          generate_release_notes: true
+          files: |
+            release/manifest.json
+            release/assets/LanPE.Packer.zip
