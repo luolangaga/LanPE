@@ -163,14 +163,39 @@ public sealed class MainWindow : Window
         using var pipe = new PackagerPipeline(_settings);
         await RunBusyAsync("正在拉取清单…", async (progress, ct) =>
         {
-            _manifest = await pipe.FetchManifestAsync(progress, ct);
-            RenderComponents();
+            var manifest = await pipe.FetchManifestAsync(progress, ct);
+
+            // UI 集合（组件树 / 选项 / 软件列表）必须在 UI 线程上重建 ——
+            // 在后台线程直接改集合会与布局测量的枚举并发，导致
+            // "Collection was modified; enumeration operation may not execute."
+            _manifest = manifest;
+            await RunOnUiAsync(RenderComponents);
         });
+    }
+
+    /// <summary>把动作投递到 UI 线程执行（若当前无 Dispatcher 则直接执行）。</summary>
+    private static async Task RunOnUiAsync(Action action)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null)
+        {
+            action();
+            return;
+        }
+
+        var tcs = new TaskCompletionSource();
+        dispatcher.BeginInvoke(() =>
+        {
+            try { action(); tcs.SetResult(); }
+            catch (Exception ex) { tcs.SetException(ex); }
+        });
+
+        await tcs.Task.ConfigureAwait(false);
     }
 
     private void RenderComponents()
     {
-        _componentList.Children();
+        _componentList.Clear();
         _states.Clear();
         if (_manifest == null) return;
 
@@ -220,7 +245,7 @@ public sealed class MainWindow : Window
 
     private void RenderOptions(Component comp)
     {
-        _optionHost.Children();
+        _optionHost.Clear();
         if (!_states.TryGetValue(comp.Id ?? "", out var state)) return;
 
         foreach (var opt in comp.Options)
@@ -259,7 +284,7 @@ public sealed class MainWindow : Window
 
     private void RenderSoftware(Component comp)
     {
-        _softwareHost.Children();
+        _softwareHost.Clear();
         if (!_states.TryGetValue(comp.Id ?? "", out var state)) return;
 
         if (comp.Software.Count == 0)
@@ -382,26 +407,28 @@ public sealed class MainWindow : Window
         var progress = new Progress<ProgressInfo>(OnProgress);
         try
         {
-            _lblStatus.Text(status);
+            await RunOnUiAsync(() => _lblStatus.Text(status));
             await Task.Run(() => work(progress, _cts.Token), _cts.Token);
-            _lblStatus.Text("完成。");
-            _barOverall.Value(100);
+            await RunOnUiAsync(() => { _lblStatus.Text("完成。"); _barOverall.Value(100); });
         }
         catch (OperationCanceledException)
         {
-            _lblStatus.Text("已取消。");
-            Log("操作已取消。");
+            await RunOnUiAsync(() => { _lblStatus.Text("已取消。"); Log("操作已取消。"); });
         }
         catch (Exception ex)
         {
-            _lblStatus.Text("失败。");
-            Log("错误：" + ex.Message);
-            MessageBox.Notify(ex.Message, PromptIconKind.Error, owner: this);
+            var message = ex.Message;
+            await RunOnUiAsync(() =>
+            {
+                _lblStatus.Text("失败。");
+                Log("错误：" + message);
+                MessageBox.Notify(message, PromptIconKind.Error, owner: this);
+            });
         }
         finally
         {
             _busy = false;
-            SetBusy(false);
+            await RunOnUiAsync(() => SetBusy(false));
             _cts.Dispose();
             _cts = null;
         }
@@ -409,13 +436,17 @@ public sealed class MainWindow : Window
 
     private void OnProgress(ProgressInfo p)
     {
-        if (!string.IsNullOrEmpty(p.Message))
+        // 进度回调来自后台线程，所有 UI 写入都投递到 UI 线程
+        _ = RunOnUiAsync(() =>
         {
-            _lblStatus.Text(p.Message!);
-            Log(p.Message!);
-        }
-        if (p.OverallPercent >= 0) _barOverall.Value(Math.Clamp(p.OverallPercent, 0, 100));
-        if (p.CurrentPercent >= 0) _barCurrent.Value(Math.Clamp(p.CurrentPercent, 0, 100));
+            if (!string.IsNullOrEmpty(p.Message))
+            {
+                _lblStatus.Text(p.Message!);
+                Log(p.Message!);
+            }
+            if (p.OverallPercent >= 0) _barOverall.Value(Math.Clamp(p.OverallPercent, 0, 100));
+            if (p.CurrentPercent >= 0) _barCurrent.Value(Math.Clamp(p.CurrentPercent, 0, 100));
+        });
     }
 
     private void SetBusy(bool busy)
