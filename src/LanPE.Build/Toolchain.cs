@@ -12,10 +12,14 @@ public sealed class Toolchain
     public string? XorrisoPath { get; private set; }
     public string? GrubMkrescuePath { get; private set; }
     public string? WimlibPath { get; private set; }
+    public string? GrubMkimagePath { get; private set; }
+
+    /// <summary>GRUB 模块根目录（含 i386-pc / x86_64-efi 子目录）。</summary>
+    public string? GrubRoot { get; private set; }
 
     public Toolchain(string rootDir) => RootDir = rootDir ?? throw new ArgumentNullException(nameof(rootDir));
 
-    public bool IsReady => XorrisoPath != null || GrubMkrescuePath != null;
+    public bool IsReady => GrubMkimagePath != null;
 
     /// <summary>从 tools.zip 解包并定位各工具。</summary>
     public void Prepare(string? toolsZipPath)
@@ -42,7 +46,37 @@ public sealed class Toolchain
         SevenZipPath = Find("7za.exe", "7z.exe");
         XorrisoPath = Find("xorriso.exe", "xorriso");
         GrubMkrescuePath = Find("grub-mkrescue", "grub-mkrescue.exe", "grub-mkrescue.bat", "grub-mkrescue.sh");
+        FindGrubImageTools();
         WimlibPath = Find("wimlib-imagex.exe", "wimlib-imagex");
+    }
+
+    /// <summary>定位 grub-mkimage 与其模块目录。</summary>
+    private void FindGrubImageTools()
+    {
+        if (!Directory.Exists(RootDir)) return;
+
+        GrubMkimagePath = Find("grub-mkimage.exe", "grub-mkimage");
+        if (GrubMkimagePath == null) return;
+
+        // 模块目录：定位包含 x86_64-efi 的目录（可能是 mkimage 同级或上级 grub/ 目录）
+        GrubRoot = FindDirectory("x86_64-efi") ?? Path.GetDirectoryName(GrubMkimagePath);
+    }
+
+    /// <summary>取指定架构的 GRUB 模块目录。</summary>
+    public string? GrubModuleDir(string arch)
+    {
+        if (GrubRoot == null) return null;
+        string direct = Path.Combine(GrubRoot, arch);
+        if (Directory.Exists(direct)) return direct;
+
+        var hit = Directory.EnumerateDirectories(RootDir, arch, SearchOption.AllDirectories).FirstOrDefault();
+        return hit;
+    }
+
+    private string? FindDirectory(string name)
+    {
+        if (!Directory.Exists(RootDir)) return null;
+        return Directory.EnumerateDirectories(RootDir, name, SearchOption.AllDirectories).FirstOrDefault();
     }
 
     private string? Find(params string[] names)
