@@ -1,0 +1,31 @@
+﻿# Build output
+[Bb]in/
+[Oo]bj/
+publish/
+*.user
+*.suo
+.vs/
+
+# Tooling / agent metadata
+.commandcode/
+.research/
+.build/
+
+# LanPE runtime
+release/assets/*
+!release/assets/.gitkeep
+
+# Large media (由脚本生产，不入库)
+*.iso
+*.wim
+*.img
+*.7z
+
+# Tools binaries
+tools/bin/
+tools/*/bin/
+
+# OS cruft
+Thumbs.db
+Desktop.ini
+.DS_Store
