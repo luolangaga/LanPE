@@ -23,12 +23,27 @@ $ok = 0; $fail = 0; $skipped = 0
 foreach ($f in $files) {
     $rel = $f.FullName.Substring($Root.Length + 1).Replace('\', '/')
 
-    # 已存在且内容相同则跳过
-    $existing = $null
-    try { $existing = gh api "/repos/$Repo/contents/$rel`?ref=$Branch" --jq '.sha, .size' 2>$null } catch { }
+    # 已存在则带上 sha 才能更新（Contents API 要求），否则视为新增
+    $sha = $null
+    try { $sha = gh api "/repos/$Repo/contents/$rel`?ref=$Branch" --jq '.sha' 2>$null } catch { }
+    if ($sha) { $sha = $sha.Trim() }
+    if ($sha -match '^\s*$') { $sha = $null }
 
     $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($f.FullName))
-    $payload = @{ message = $msg; content = $b64; branch = $Branch } | ConvertTo-Json -Compress -Depth 3
+    $payloadObj = @{ message = $msg; content = $b64; branch = $Branch }
+    if ($sha) { $payloadObj['sha'] = $sha }
+
+    # 内容未变化则跳过，避免产生空提交
+    if ($sha) {
+        try {
+            $remote = gh api "/repos/$Repo/contents/$rel`?ref=$Branch" --jq '.content' 2>$null | Out-String
+            $remote = ($remote -replace '\s', '').Trim()
+            if ($remote -and $remote -eq $b64) { "SKIP $rel (unchanged)"; $skipped++; continue }
+        }
+        catch { }
+    }
+
+    $payload = $payloadObj | ConvertTo-Json -Compress -Depth 3
     $tmp = Join-Path $env:TEMP ("lanpe_up_" + [guid]::NewGuid().ToString('N') + ".json")
     [IO.File]::WriteAllText($tmp, $payload)
 
