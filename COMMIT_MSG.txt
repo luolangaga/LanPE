@@ -1,0 +1,15 @@
+feat: LanPE 多启动打包器 — MewUI + .NET 10 NativeAOT
+
+组件化多启动介质打包器：从 GitHub Release 拉取清单，按需勾选组件与内置软件，
+组装为 BIOS+UEFI 双引导 hybrid ISO，输出为 ISO / 写入 U 盘 / 安装到本地磁盘。
+
+- UI 用 MewUI (C# Markup)，移除 WinForms；net10 + NativeAOT 单文件发布 (9.5MB)
+- JSON 走 System.Text.Json 源生成，禁用反射序列化（AOT 必需）
+- 物理盘枚举用 SetupAPI/DeviceIoControl P/Invoke，规避 System.Management 在 AOT 下的 COM 互操作崩溃
+- Windows PE 采用 wimboot 引导模型：多 PE 共存（原生 BCD chainload 会在卷根冲突）
+- 三套载荷：win11pe.wim (FirPE)、win10pe.wim (Win10 ISO)、systemrescue.iso
+- 从 FirPE 提取 8 组工具包
+- 内置软件旁挂 /LanPE/Apps，可按次勾选无需重打 wim
+- 写 U 盘安全护栏：拒绝系统盘、输入 ERASE 二次确认
+
+Co-authored-by: CommandCodeBot <noreply@commandcode.ai>
