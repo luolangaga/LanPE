@@ -142,25 +142,30 @@ public sealed class InstallLocalDialog : Window
 
         var progress = new Progress<ProgressInfo>(p =>
         {
-            if (!string.IsNullOrEmpty(p.Message)) _lblStatus.Text(p.Message!);
-            if (p.CurrentPercent >= 0) _bar.Value(Math.Clamp(p.CurrentPercent, 0, 100));
+            _ = OnUiAsync(() =>
+            {
+                if (!string.IsNullOrEmpty(p.Message)) _lblStatus.Text(p.Message!);
+                if (p.CurrentPercent >= 0) _bar.Value(Math.Clamp(p.CurrentPercent, 0, 100));
+            });
         });
 
         try
         {
-            SetEnabled(false);
+            await OnUiAsync(() => SetEnabled(false));
             using var cts = new CancellationTokenSource();
             var installer = new LocalInstaller();
             await Task.Run(() => installer.InstallAsync(
                 _stagingDir, _txtGrubEfi.Text!, target, progress, cts.Token), cts.Token);
 
-            MessageBox.Notify("安装完成，重启后可在启动菜单看到该启动项。", PromptIconKind.Info, owner: this);
+            await OnUiAsync(() => MessageBox.Notify(
+                "安装完成，重启后可在启动菜单看到该启动项。", PromptIconKind.Info, owner: this));
         }
         catch (Exception ex)
         {
-            MessageBox.Notify(ex.Message, PromptIconKind.Error, owner: this);
+            var message = ex.Message;
+            await OnUiAsync(() => MessageBox.Notify(message, PromptIconKind.Error, owner: this));
         }
-        finally { SetEnabled(true); }
+        finally { await OnUiAsync(() => SetEnabled(true)); }
     }
 
     private async Task UninstallAsync()
@@ -171,22 +176,41 @@ public sealed class InstallLocalDialog : Window
 
         var progress = new Progress<ProgressInfo>(p =>
         {
-            if (!string.IsNullOrEmpty(p.Message)) _lblStatus.Text(p.Message!);
+            _ = OnUiAsync(() =>
+            {
+                if (!string.IsNullOrEmpty(p.Message)) _lblStatus.Text(p.Message!);
+            });
         });
 
         try
         {
-            SetEnabled(false);
+            await OnUiAsync(() => SetEnabled(false));
             using var cts = new CancellationTokenSource();
             var installer = new LocalInstaller();
             await Task.Run(() => installer.UninstallAsync(target, progress, cts.Token), cts.Token);
-            MessageBox.Notify("卸载完成。", PromptIconKind.Info, owner: this);
+            await OnUiAsync(() => MessageBox.Notify("卸载完成。", PromptIconKind.Info, owner: this));
         }
         catch (Exception ex)
         {
-            MessageBox.Notify(ex.Message, PromptIconKind.Error, owner: this);
+            var message = ex.Message;
+            await OnUiAsync(() => MessageBox.Notify(message, PromptIconKind.Error, owner: this));
         }
-        finally { SetEnabled(true); }
+        finally { await OnUiAsync(() => SetEnabled(true)); }
+    }
+
+    /// <summary>把动作投递到 UI 线程（进度回调来自后台线程）。</summary>
+    private static async Task OnUiAsync(Action action)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher == null) { action(); return; }
+
+        var tcs = new TaskCompletionSource();
+        dispatcher.BeginInvoke(() =>
+        {
+            try { action(); tcs.SetResult(); }
+            catch (Exception e) { tcs.SetException(e); }
+        });
+        await tcs.Task.ConfigureAwait(false);
     }
 
     private void SetEnabled(bool enabled)
