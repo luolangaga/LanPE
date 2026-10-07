@@ -33,14 +33,17 @@ $baseUrl = "https://github.com/$Repo/releases/download/$ReleaseTag"
 function Fill-Asset([string]$fileName) {
     if ([string]::IsNullOrWhiteSpace($fileName)) { return $null }
     $p = Join-Path $assetsDir $fileName
+    # GitHub Release 下载 URL 必须用「资产名」而不是本地相对路径。
+    # 例如本地暂存路径 apps/disk-tools.zip 对应的资产名是 disk-tools.zip。
+    $assetName = Split-Path -Leaf $fileName
     if (-not (Test-Path $p)) {
         Write-Warning "资产缺失：$fileName（将生成占位条目）"
-        return [ordered]@{ file = $fileName; url = "$baseUrl/$fileName"; sha256 = ""; sizeBytes = 0 }
+        return [ordered]@{ file = $fileName; url = "$baseUrl/$assetName"; sha256 = ""; sizeBytes = 0 }
     }
     $h = (Get-FileHash -Path $p -Algorithm SHA256).Hash.ToLower()
     $s = (Get-Item $p).Length
     Info "$fileName  sha256=$($h.Substring(0,12))…  size=$s"
-    return [ordered]@{ file = $fileName; url = "$baseUrl/$fileName"; sha256 = $h; sizeBytes = $s }
+    return [ordered]@{ file = $fileName; url = "$baseUrl/$assetName"; sha256 = $h; sizeBytes = $s }
 }
 
 $tpl = Get-Content $Template -Raw | ConvertFrom-Json
